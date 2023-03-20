@@ -34,7 +34,7 @@ pip install -e .
 ## Running
 You can run examples of unconditional generation and motif-scaffolding with SMC-Diff with the included ipython notebook.
 ```
-notebook/inference_example.ipynb
+inference_example.ipynb
 ```
 
 ## Related works
