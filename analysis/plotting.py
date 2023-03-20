@@ -3,7 +3,6 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import matplotlib.pyplot as plt
 from typing import List
-import geomstats.visualization as visualization
 
 
 def create_scatter(pos_3d: np.ndarray,
@@ -208,19 +207,3 @@ def plot_sample_grid(samples, num_res, motif_bb_3d=None, true_bb_3d=None):
 
 
     fig.show()
-
-
-def plot_se3(se3_vec, ax_lim=None, title=None, ax=None):
-    if ax is None:
-        fig = plt.figure(figsize=(8, 8))
-        ax = fig.add_subplot(111, projection="3d")
-    visualization.plot(se3_vec, ax=ax, space="SE3_GROUP")
-    bb_trans = se3_vec[:, 3:]
-    ln = ax.plot(bb_trans[:,0], bb_trans[:,1], bb_trans[:,2], alpha=0.4)
-    if ax_lim is not None:
-        ax.set_xlim(-ax_lim, ax_lim)
-        ax.set_ylim(-ax_lim, ax_lim)
-        ax.set_zlim(-ax_lim, ax_lim)
-    if title:
-        ax.set_title(title)
-    return ln

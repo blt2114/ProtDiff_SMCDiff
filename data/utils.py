@@ -6,7 +6,6 @@ import collections
 import os
 import pickle
 import string
-import dgl
 import torch
 from typing import List, Dict, Any
 from data import parsers, residue_constants
@@ -211,13 +210,10 @@ def create_data_loader(
         shuffle,
         num_workers=0,
         np_collate=False,
-        dgl_collate=False,
         prefetch_factor=2):
     """Creates a data loader with jax compatible data structures."""
     if np_collate:
         collate_fn = lambda x: concat_np_features(x, add_batch_dim=True)
-    elif dgl_collate:
-        collate_fn = lambda samples: dgl.batch(samples)
     else:
         collate_fn = None
     persistent_workers = True if num_workers > 0 else False
@@ -296,24 +292,6 @@ def read_mmseq_clusters(cluster_level=30):
                         f'{pdb_id}_{chain_id}'].add(cluster_id)
     return cluster_to_pdb_id, pdb_id_to_cluster, pdb_chain_id_to_cluster
 
-def set_graph_precision(G, float_precision, int_precision):
-    '''
-    Sets the precision of all node and edge elements of a dgl graph
-    '''
-    for name, f1d in G.ndata.items():
-        if 'float' in str(f1d.dtype):
-            G.ndata[name] = f1d.to(float_precision)
-        elif 'int' in str(f1d.dtype):
-            G.ndata[name] = f1d.to(int_precision)
-
-    for name, f2d in G.edata.items():
-        if 'float' in str(f2d.dtype):
-            G.edata[name] = f2d.to(float_precision)
-        elif 'int' in str(f2d.dtype):
-            G.edata[name] = f2d.to(int_precision)
-
-    return G
-
 def positional_embedding(N, embed_size):
     """positional_embedding creates sine / cosine positional embeddings as described
     in `Attention is all you need'
@@ -333,48 +311,6 @@ def positional_embedding(N, embed_size):
         pos_embedding_sin, pos_embedding_cos], axis=-1)
     return pos_embedding
 
-def make_topk_graph(xyz, node_L0=None, edge_L0=None, topk=128, kmin=6):
-    '''
-    Input:
-        - xyz: atom cooordinates (L, 3)
-        - node_L0: L0 node features (L, ?, 1)  # the trailing dumby dim is because L0 feats have 1 order
-        - node_L1: L1 node features (L, ?, 3)  # the trailing dim is 3 because L1 feats have 3 orders
-        - edge_features: pairwise features (L, L, ?, 1)  # must be L0
-    Output:
-        - G: defined graph
-    '''
-
-    L = xyz.shape[0]
-    device = xyz.device
-
-    # distance map from current CA coordinates
-    D = torch.cdist(xyz, xyz).fill_diagonal_(999.9)
-
-    # get top_k neighbors
-    _,idx = torch.topk(D, min(topk, L), largest=False)
-    topk_mtx = torch.zeros_like(D).scatter_(1,idx,1.0)
-
-    # make separation matrix
-    idxs = torch.arange(L)
-    sep = torch.abs(idxs[:, None] - idxs[None, :]).to(device)
-
-    # get edges
-    cond = (topk_mtx>0) | ((sep>0) & (sep<=kmin))
-    i,j = torch.where(cond)
-
-    G = dgl.graph((i, j), num_nodes=L).to(device)
-
-    # add node features
-    if node_L0 is not None:
-        G.ndata['node_L0'] = node_L0
-
-    # add edge features
-    G.edata['rel_pos'] = (xyz[j] - xyz[i]).detach() # no gradient through basis functions
-    if edge_L0 is not None:
-        G.edata['edge_L0'] = edge_L0[i,j]
-
-    return G
-
 def add_timestep(G, t):
     '''
     Add timestep information to a graph
@@ -390,49 +326,6 @@ def add_residue_index(G):
     G.ndata['residue_index'] = torch.arange(G.num_nodes()).to(device)
 
     return G
-
-def pdb2dgl_graph(pdb_path,
-                  diffusion_fn,
-                  T,
-                  float_precision=torch.float32,
-                  int_precision=torch.int32,
-                  scale_factor=10,
-                  t=None):
-    '''
-    Make a dgl graph from a pdb
-    '''
-    pdb_dir, pdb_name = os.path.split(pdb_path)
-    chain_feats = parse_pdb(pdb_name, pdb_path, scale_factor=scale_factor)
-
-    # Diffuse the structure
-    if t is None:
-        t = np.int64(4)
-        #t = np.random.choice(T, 1)[0]
-    else:
-        t = np.int64(t)
-
-    bb_corrupted, bb_noise = diffusion_fn(
-        chain_feats['bb_positions'], t)
-    chain_feats['bb_corrupted'] = bb_corrupted
-    chain_feats['bb_local_frames'] = get_local_coordinates(
-        bb_corrupted)
-    chain_feats['bb_noise'] = bb_noise
-
-    # make dgl graph
-    G = make_topk_graph(xyz=torch.tensor(chain_feats['bb_corrupted']))
-
-    # tuck some chain features into G
-    G.ndata['bb_noise'] = torch.tensor(bb_noise)  # ground truth displacement
-    G.ndata['bb_mask'] = torch.tensor(chain_feats['bb_mask'])
-    G.ndata['residue_index'] = torch.tensor(chain_feats['residue_index'])
-    G.ndata['bb_positions'] = torch.tensor(chain_feats['bb_positions'])
-    G.ndata['bb_corrupted'] = torch.tensor(chain_feats['bb_corrupted'])
-    G.ndata['t'] = torch.full_like(G.nodes(), t)
-
-    G = set_graph_precision(G, float_precision, int_precision)
-
-    return G
-
 
 def construct_rigid_frames(trans, device, rot=None):
     assert len(trans.shape) == 3
