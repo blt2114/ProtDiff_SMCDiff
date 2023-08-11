@@ -272,15 +272,8 @@ class Experiment:
         bb_mask = batch['bb_mask']
         t = batch['t'] # [B]
 
-        # Kt_1 (K^{t-1}), of shape [B, N, N]
         errors = pred - labels # of shape [B, N, D]
-        # NOTE: To account for 0 indexing vs 1 indexing, we subtract 1 from the
-        # power here.  It should otherwise be K^(t-1) instead of K^t.
-        Kt_1 = self._diffuser.K ** t
-        Kt_1 = torch.Tensor(Kt_1).double().to(self.device)
-        losses = torch.mean((
-            torch.einsum('ijk,ikm->ijm', Kt_1, errors)
-            )**2, dim=(-1,))
+        losses = torch.mean(errors**2, dim=(-1,))
         aux_data = {
             'pred': pred,
             'losses': losses,
